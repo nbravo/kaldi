@@ -1,26 +1,7 @@
-// gst-plugin/gst-online-decode-faster.cc
+// gst-plugin/gst-online-gmm-decode-faster.cc
 
-// Copyright 2013  Tanel Alumae, Tallinn University of Technology
-// Copyright 2012 Cisco Systems (author: Matthias Paulik)
-// Modifications to the original contribution by Cisco Systems made by:
-// Vassil Panayotov
-
-// See ../../COPYING for clarification regarding multiple authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//  http://www.apache.org/licenses/LICENSE-2.0
-//
-// THIS CODE IS PROVIDED *AS IS* BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
-// KIND, EITHER EXPRESS OR IMPLIED, INCLUDING WITHOUT LIMITATION ANY IMPLIED
-// WARRANTIES OR CONDITIONS OF TITLE, FITNESS FOR A PARTICULAR PURPOSE,
-// MERCHANTABLITY OR NON-INFRINGEMENT.
-// See the Apache 2 License for the specific language governing permissions and
-// limitations under the License.
 /**
- * GStreamer plugin for automatic speecg recognition.
+ * GStreamer plugin for automatic speech recognition.
  * Based on Kaldi's OnlineGmmDecodeFaster decoder.
  *
  * <refsect2>
@@ -77,6 +58,8 @@ enum {
   PROP_WORD_SYMS,
   PROP_SILENCE_PHONES,
   PROP_LDA_MAT,
+  PROP_LEFT_CONTEXT,
+  PROP_RIGHT_CONTEXT,
   PROP_LAST
 };
 
@@ -88,8 +71,8 @@ enum {
 #define DEFAULT_LEFT_CONTEXT    4
 #define DEFAULT_RIGHT_CONTEXT   4
 
-
-/* the capabilities of the inputs and outputs.
+/**
+ * The capabilities of the inputs and outputs.
  *
  * describe the real formats here.
  */
@@ -103,7 +86,6 @@ static GstStaticPadTemplate sink_factory =
                                 "channels = (int) 1, "
                                 "rate = (int) 16000 "));
 
-
 static GstStaticPadTemplate src_factory =
     GST_STATIC_PAD_TEMPLATE("src",
                             GST_PAD_SRC,
@@ -114,7 +96,6 @@ static guint gst_online_gmm_decode_faster_signals[LAST_SIGNAL];
 
 #define gst_online_gmm_decode_faster_parent_class parent_class
 G_DEFINE_TYPE(GstOnlineGmmDecodeFaster, gst_online_gmm_decode_faster, GST_TYPE_ELEMENT);
-
 
 static void
 gst_online_gmm_decode_faster_set_property(GObject * object, guint prop_id,
@@ -139,7 +120,6 @@ static GstFlowReturn gst_online_gmm_decode_faster_chain(GstPad * pad,
 
 static void
 gst_online_gmm_decode_faster_loop(GstOnlineGmmDecodeFaster * filter);
-
 
 /* GObject vmethod implementations */
 
@@ -199,7 +179,24 @@ static void gst_online_gmm_decode_faster_class_init(GstOnlineGmmDecodeFasterClas
                                                       "Filename of the LDA transform data",
                                                       "",
                                                       (GParamFlags) G_PARAM_READWRITE));
-
+  g_object_class_install_property(G_OBJECT_CLASS(klass),
+                                  PROP_LEFT_CONTEXT,
+                                  g_param_spec_int("left-context",
+                                                   "Left Context",
+                                                   "Left Context",
+                                                   0,
+                                                   100,
+                                                   DEFAULT_LEFT_CONTEXT,
+                                                   (GParamFlags) G_PARAM_READWRITE));
+  g_object_class_install_property(G_OBJECT_CLASS(klass),
+                                  PROP_RIGHT_CONTEXT,
+                                  g_param_spec_int("right-context",
+                                                   "Right Context",
+                                                   "Right Context",
+                                                   0,
+                                                   100,
+                                                   DEFAULT_RIGHT_CONTEXT,
+                                                   (GParamFlags) G_PARAM_READWRITE));
   gst_element_class_set_details_simple(gstelement_class,
                                        "OnlineGmmDecodeFaster",
                                        "Speech/Audio",
@@ -218,11 +215,10 @@ static void gst_online_gmm_decode_faster_class_init(GstOnlineGmmDecodeFasterClas
                      G_TYPE_STRING);
 }
 
-
-
-/* initialize the new element
+/**
+ * initialize the new element
  * instantiate pads and add them to element
- * set pad calback functions
+ * set pad callback functions
  * initialize instance structure
  */
 static void
@@ -266,7 +262,6 @@ gst_online_gmm_decode_faster_init(GstOnlineGmmDecodeFaster * filter) {
   filter->simple_options_->Register("min-cmn-window", &filter->min_cmn_window_,
                                     "Minumum CMN window used at start of decoding (adds "
                                       "latency only at start)");
-
 
   filter->sinkpad_ = gst_pad_new_from_static_template(&sink_factory, "sink");
   gst_pad_set_event_function(filter->sinkpad_,
@@ -382,7 +377,7 @@ gst_online_gmm_decode_faster_init(GstOnlineGmmDecodeFaster * filter) {
 static bool
 gst_online_gmm_decode_faster_allocate(GstOnlineGmmDecodeFaster * filter) {
   if (!filter->decoder_) {
-    GST_INFO_OBJECT(filter,  "Loading Kaldi decoder");
+    GST_INFO_OBJECT(filter, "Loading Kaldi decoder");
     filter->lda_transform_ = new Matrix<BaseFloat>;
     if (strlen(filter->lda_mat_rspecifier_) > 0) {
       bool binary_in;
@@ -417,7 +412,7 @@ gst_online_gmm_decode_faster_allocate(GstOnlineGmmDecodeFaster * filter) {
                                                *(filter->silence_phones_),
                                                *(filter->trans_model_));
 
-    GST_INFO_OBJECT(filter,  "Finished loading Kaldi decoder");
+    GST_INFO_OBJECT(filter, "Finished loading Kaldi decoder");
   }
   return true;
 }
@@ -469,7 +464,6 @@ gst_online_gmm_decode_faster_finalize(GObject * object) {
   G_OBJECT_CLASS(parent_class)->finalize(object);
 }
 
-
 static bool
 gst_online_gmm_decode_faster_deallocate(GstOnlineGmmDecodeFaster * filter) {
   /* We won't deallocate the decoder once it's already allocated, since model loading could take a lot of time */
@@ -510,6 +504,12 @@ gst_online_gmm_decode_faster_set_property(GObject * object, guint prop_id,
       break;
     case PROP_SILENCE_PHONES:
       SplitStringToIntegers(g_value_get_string(value), ":", false, filter->silence_phones_);
+      break;
+    case PROP_LEFT_CONTEXT:
+      filter->left_context_ = g_value_get_int(value);
+      break;
+    case PROP_RIGHT_CONTEXT:
+      filter->right_context_ = g_value_get_int(value);
       break;
     default:
       if (prop_id >= PROP_LAST) {
@@ -572,6 +572,12 @@ gst_online_gmm_decode_faster_get_property(GObject * object, guint prop_id,
       break;
     case PROP_LDA_MAT:
       g_value_set_string(value, filter->lda_mat_rspecifier_);
+      break;
+    case PROP_LEFT_CONTEXT:
+      g_value_set_int(value, filter->left_context_);
+      break;
+    case PROP_RIGHT_CONTEXT:
+      g_value_set_int(value, filter->right_context_);
       break;
     case PROP_SILENCE_PHONES:
       for (size_t j = 0; j < filter->silence_phones_->size(); j++) {
@@ -672,7 +678,6 @@ gst_online_gmm_decode_faster_push_word(GstOnlineGmmDecodeFaster * filter, GstPad
   /* Emit a signal for applications. */
   g_signal_emit(filter, gst_online_gmm_decode_faster_signals[HYP_WORD_SIGNAL], 0, hyp);
 }
-
 
 static void
 gst_online_gmm_decode_faster_push_words(GstOnlineGmmDecodeFaster * filter, GstPad *pad,
